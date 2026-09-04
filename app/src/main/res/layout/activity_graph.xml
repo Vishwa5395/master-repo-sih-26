@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    activity_graph.xml  –  Modern dark analytics layout
+    Preserves R.id.linearLayoutGraph and R.id.fab used by GraphActivity.java
+-->
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#080A0C"
+    tools:context="nisargpatel.deadreckoning.activity.GraphActivity">
+
+    <!-- ── Header bar ──────────────────────────────────────────────────────── -->
+    <LinearLayout
+        android:id="@+id/graphHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#10151A"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="14dp"
+        app:layout_anchor="@id/graphHeader"
+        app:layout_anchorGravity="top">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- Icon badge -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                app:cardCornerRadius="8dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="#1A38BDF8"
+                app:strokeColor="#4038BDF8"
+                app:strokeWidth="1dp">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="8dp"
+                    android:src="@drawable/ic_arrow_up"
+                    app:tint="#38BDF8"
+                    android:contentDescription="Graph" />
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Position Graph"
+                    android:textColor="#F7FAFC"
+                    android:textSize="19sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.02" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IMU dead reckoning trajectory"
+                    android:textColor="#73808C"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <!-- Status pill -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="#1A2DD4BF"
+                app:strokeColor="#402DD4BF"
+                app:strokeWidth="1dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="LIVE"
+                    android:textColor="#2DD4BF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.12"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp" />
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+        <!-- Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="14dp"
+            android:background="#1A34414D" />
+
+    </LinearLayout>
+
+    <!-- ── Graph container ─────────────────────────────────────────────────── -->
+    <!--
+        LinearLayout ID preserved — GraphActivity calls mLinearLayout.addView(scatterPlot.getGraphView(...))
+        and mLinearLayout.removeAllViews() directly.
+    -->
+    <LinearLayout
+        android:id="@+id/linearLayoutGraph"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="88dp"
+        android:layout_marginBottom="16dp"
+        android:layout_marginHorizontal="12dp"
+        android:orientation="horizontal"
+        android:background="#10151A"
+        android:padding="8dp" />
+
+    <!-- Subtle grid overlay (purely decorative, pointer events pass through) -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="88dp"
+        android:layout_marginBottom="16dp"
+        android:layout_marginHorizontal="12dp"
+        android:clickable="false"
+        android:focusable="false"
+        android:background="@android:color/transparent" />
+
+    <!-- ── FAB (start / pause) ─────────────────────────────────────────────── -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fab"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:contentDescription="Start / pause recording"
+        app:srcCompat="@drawable/ic_play_arrow_black_24dp"
+        app:tint="@android:color/black"
+        app:backgroundTint="#38BDF8"
+        app:borderWidth="0dp"
+        app:fabSize="normal"
+        app:elevation="8dp" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

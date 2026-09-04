@@ -1,0 +1,18 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+app/build
+*.hprof
+
+.codex-ml-codes-review/
+
+# IO-VNBD training corpus, ~415 MB of CSV. Pasted in locally and reached by the
+# junction under .codex-ml-codes-review/data. Never belongs in git.
+/Categorised IOVNB Dataset/

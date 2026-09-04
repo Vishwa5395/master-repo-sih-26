@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light automotive dashboard palette for legacy XML screens. -->
+    <color name="colorPrimary">#7654E8</color>
+    <color name="colorPrimaryDark">#5D40C7</color>
+    <color name="colorPrimaryLight">#A998F3</color>
+    <color name="colorAccent">#3478F6</color>
+    <color name="colorSuccess">#1EAF78</color>
+    <color name="colorError">#E8525E</color>
+    <color name="colorWarning">#F4A340</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#172033</color>
+    <color name="textPrimary">#172033</color>
+    <color name="textSecondary">#69778D</color>
+    <color name="divider">#E3E9F3</color>
+    <color name="background">#F3F6FB</color>
+    <color name="cardBackground">#FFFFFF</color>
+</resources>

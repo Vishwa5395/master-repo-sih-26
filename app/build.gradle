@@ -1,0 +1,97 @@
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+}
+
+android {
+    namespace 'nisargpatel.deadreckoning'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "nisargpatel.deadreckoning"
+        minSdk 23
+        targetSdk 34
+        versionCode 1
+        versionName "2.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        compose true
+    }
+    packaging {
+        resources {
+            excludes += 'osmosis-plugins.conf'
+        }
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion "1.5.14"
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'androidx.activity:activity-compose:1.8.2'
+
+    // Compose BOM & Material 3
+    implementation platform('androidx.compose:compose-bom:2024.05.00')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.navigation:navigation-compose:2.7.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.7.0'
+
+    // Google Play Services - Location
+    implementation 'com.google.android.gms:play-services-location:21.2.0'
+
+    // OpenStreetMap - osmdroid
+    implementation 'org.osmdroid:osmdroid-android:6.1.18'
+
+    // Offline OSM PBF reader for regional road-package imports
+    implementation('org.openstreetmap.osmosis:osmosis-pbf2:0.48.3') {
+        exclude group: 'org.springframework', module: 'spring-jdbc'
+    }
+
+    // Gson
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // EJML 0.28
+    implementation 'org.ejml:all:0.28'
+
+    // On-device V8 inertial dead-reckoning inference
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.18.0'
+
+    // Unit testing
+    testImplementation 'junit:junit:4.13.2'
+
+    // Desktop ONNX Runtime, so the blackout ablation can run the SHIPPED model artifact on
+    // the JVM. This is the plain 'onnxruntime' artifact, not 'onnxruntime-android', which
+    // packages only Android native libraries and cannot load in a unit test. Pinned to the
+    // same version as the Android dependency above so both share inference semantics.
+    testImplementation 'com.microsoft.onnxruntime:onnxruntime:1.18.0'
+}
+
+configurations.configureEach {
+    exclude group: 'com.google.guava', module: 'listenablefuture'
+}
