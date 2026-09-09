@@ -24,6 +24,7 @@ class NavigationViewModel(
     val sensorState: StateFlow<SensorState> = repository.sensorState
     val mapState: StateFlow<MapState> = repository.mapState
     val mapMatchingState: StateFlow<MapMatchingState> = repository.mapMatchingState
+    val mapMatchDebugState: StateFlow<MapMatchDebugState?> = repository.mapMatchDebugState
     val events: SharedFlow<NavigationEvent> = repository.navigationEvents
 
     private val _selectedRoute = MutableStateFlow(RouteInfo())

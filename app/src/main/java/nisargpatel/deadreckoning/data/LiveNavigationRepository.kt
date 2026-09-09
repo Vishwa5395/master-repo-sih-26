@@ -22,6 +22,7 @@ import nisargpatel.deadreckoning.domain.state.AIState
 import nisargpatel.deadreckoning.domain.state.AnalyticsState
 import nisargpatel.deadreckoning.domain.state.CandidateRoad
 import nisargpatel.deadreckoning.domain.state.GNSSState
+import nisargpatel.deadreckoning.domain.state.MapMatchDebugState
 import nisargpatel.deadreckoning.domain.state.MapMatchingState
 import nisargpatel.deadreckoning.domain.state.MapState
 import nisargpatel.deadreckoning.domain.state.NavigationEvent
@@ -37,6 +38,7 @@ import nisargpatel.deadreckoning.domain.state.NavigationSession
 import nisargpatel.deadreckoning.domain.state.SessionState
 import nisargpatel.deadreckoning.ml.IdrMotionEngine
 import nisargpatel.deadreckoning.ml.IdrPrediction
+import nisargpatel.deadreckoning.ml.MotionClass
 import nisargpatel.deadreckoning.ml.V8DeadReckoningEngine
 import nisargpatel.deadreckoning.ml.V8Prediction
 import nisargpatel.deadreckoning.fusion.FusedVehicleState
@@ -111,7 +113,9 @@ class LiveNavigationRepository(
     private val historyStore = NavigationHistoryStore(context)
     private val calibrationStore = CalibrationStore(context)
     private val offlineRoadNetwork = OfflineRoadNetwork.get(context)
-    private val roadMatcher = HiddenMarkovRoadMatcher()
+    private val roadMatcher = HiddenMarkovRoadMatcher(
+        networkDistance = offlineRoadNetwork::shortestPathMeters
+    )
 
     private val _navigationState = MutableStateFlow(NavigationState())
     override val navigationState: StateFlow<NavigationState> = _navigationState.asStateFlow()
@@ -125,6 +129,8 @@ class LiveNavigationRepository(
     override val mapState: StateFlow<MapState> = _mapState.asStateFlow()
     private val _mapMatchingState = MutableStateFlow(MapMatchingState())
     override val mapMatchingState: StateFlow<MapMatchingState> = _mapMatchingState.asStateFlow()
+    private val _mapMatchDebugState = MutableStateFlow<MapMatchDebugState?>(null)
+    override val mapMatchDebugState: StateFlow<MapMatchDebugState?> = _mapMatchDebugState.asStateFlow()
     private val _analyticsState = MutableStateFlow(historyStore.aggregate(historyStore.load()))
     override val analyticsState: StateFlow<AnalyticsState> = _analyticsState.asStateFlow()
     private val _sessionState = MutableStateFlow(SessionState(sessions = historyStore.load()))
@@ -279,6 +285,10 @@ class LiveNavigationRepository(
         val assessment = gnssMonitor.onSilence(now)
         if (assessment.quality == before && assessment.quality != GnssQuality.DENIED) return
 
+        if (assessment.quality == GnssQuality.DENIED && before != GnssQuality.DENIED) {
+            Log.w("DR_NAV", "[GNSS_OUTAGE] GNSS silent for ${assessment.outageDurationMillis}ms -> switching to Dead Reckoning")
+        }
+
         _gnssState.value = _gnssState.value.copy(
             isAvailable = assessment.usableForFusion,
             usableForFusion = assessment.usableForFusion,
@@ -363,12 +373,17 @@ class LiveNavigationRepository(
             totalOutageMs += outageDurationMs
             lastRecoveryDurationSeconds = outageDurationMs / 1_000.0
             outageStartedAtMs = 0L
+            Log.i("DR_NAV", "[GNSS_RECOVERY] Recovered after ${"%.1f".format(lastRecoveryDurationSeconds)}s outage")
         }
         // Use the monitor's effective accuracy, which is inflated while degraded or
         // recovering. That is what stops a doubtful first fix after an outage from
         // snapping the solution across the map.
         val fusionAccuracy = assessment.effectiveAccuracyMeters ?: state.accuracyMeters
-        val fused = fusion.updateGnss(position, state.speedKmh / 3.6, state.bearingDegrees, fusionAccuracy)
+        val isStationary = _sensorState.value.isStationary || state.speedKmh < 1.2
+        val effectiveGnssSpeedMps = if (isStationary) 0.0 else state.speedKmh / 3.6
+        val fused = fusion.updateGnss(position, effectiveGnssSpeedMps, state.bearingDegrees, fusionAccuracy)
+        val displaySpeedKmh = if (isStationary) 0.0 else fused.speedMps * 3.6
+        Log.d("DR_NAV", "[GNSS_FIX] lat=${"%.6f".format(fused.position.latitude)}, lon=${"%.6f".format(fused.position.longitude)}, speed=${"%.1f".format(displaySpeedKmh)}km/h, hdg=${"%.1f".format(fused.headingDegrees)}°, acc=${"%.1f".format(fused.horizontalUncertaintyMeters)}m, quality=${assessment.quality}")
         applyRouteMatch(fused.position, isDeadReckoning = false)
         val gnssConfidence = navigationConfidence(fused, assessment.quality)
         _navigationState.value = _navigationState.value.copy(
@@ -377,7 +392,7 @@ class LiveNavigationRepository(
             } else {
                 NavigationMode.GNSS_INS
             },
-            speedKmh = fused.speedMps * 3.6,
+            speedKmh = displaySpeedKmh,
             headingDegrees = fused.headingDegrees,
             accuracyMeters = fused.horizontalUncertaintyMeters,
             latitude = fused.position.latitude,
@@ -482,7 +497,13 @@ class LiveNavigationRepository(
         } else {
             lastFusionImuNs = 0L
         }
-        val seedSpeed = if (hasFreshGnss()) _gnssState.value.speedKmh / 3.6 else _aiState.value.predictedSpeedKmh / 3.6
+        val seedSpeed = if (_sensorState.value.isStationary) {
+            0.0
+        } else if (hasFreshGnss()) {
+            if (_gnssState.value.speedKmh < 1.2) 0.0 else _gnssState.value.speedKmh / 3.6
+        } else {
+            _navigationState.value.speedKmh / 3.6
+        }
 
         if (idrModel != null) {
             idrModel.addSample(
@@ -507,31 +528,35 @@ class LiveNavigationRepository(
      * the same heads but never supervised them.
      */
     private fun applyIdrPrediction(prediction: IdrPrediction) {
-        val speedKmh = prediction.speedMps * 3.6
+        val isStationary = _sensorState.value.isStationary || prediction.motionClass == MotionClass.STATIONARY ||
+            (prediction.speedMps * 3.6 < 3.0 && _sensorState.value.accelMagnitude in 9.6f..10.0f)
+        val effectiveSpeedKmh = if (isStationary) 0.0 else prediction.speedMps * 3.6
         val speedSigmaKmh = prediction.speedUncertaintyMps * 3.6
-        val speedConfidence = if (speedSigmaKmh <= 0.0) {
+        val speedConfidence = if (isStationary) {
+            99
+        } else if (speedSigmaKmh <= 0.0) {
             0
         } else {
-            val relative = speedSigmaKmh / speedKmh.coerceAtLeast(1.0)
+            val relative = speedSigmaKmh / effectiveSpeedKmh.coerceAtLeast(1.0)
             ((1.0 - relative) * 100.0).toInt().coerceIn(0, 99)
         }
 
         _aiState.value = _aiState.value.copy(
             isActive = !hasFreshGnss(),
-            predictedSpeedKmh = speedKmh,
+            predictedSpeedKmh = effectiveSpeedKmh,
             speedConfidencePercentage = speedConfidence,
-            motionClassification = prediction.motionClass.label,
-            motionConfidencePercentage = prediction.motionConfidencePercentage,
+            motionClassification = if (isStationary) MotionClass.STATIONARY.label else prediction.motionClass.label,
+            motionConfidencePercentage = if (isStationary) 99 else prediction.motionConfidencePercentage,
             inferenceTimeMs = prediction.inferenceTimeMs,
             speedUncertaintyKmh = speedSigmaKmh,
-            forwardUncertaintyMeters = prediction.forwardUncertaintyMeters.toDouble(),
-            lateralUncertaintyMeters = prediction.lateralUncertaintyMeters.toDouble(),
+            forwardUncertaintyMeters = if (isStationary) 0.0 else prediction.forwardUncertaintyMeters.toDouble(),
+            lateralUncertaintyMeters = if (isStationary) 0.0 else prediction.lateralUncertaintyMeters.toDouble(),
             headingUncertaintyDegrees = Math.toDegrees(prediction.headingUncertaintyRadians.toDouble()),
             predictionHz = PreprocessingSpec.IDR_V1.predictionHz
         )
 
         if (hasFreshGnss()) {
-            val speedError = speedKmh - _gnssState.value.speedKmh
+            val speedError = effectiveSpeedKmh - _gnssState.value.speedKmh
             squaredSpeedError += speedError * speedError
             speedErrorSamples++
             updateAnalytics()
@@ -548,19 +573,44 @@ class LiveNavigationRepository(
             )
         }
 
-        fusion.updateSpeed(prediction.speedMps.toDouble(), prediction.speedUncertaintyMps.toDouble())
-
-        val fused = fusion.predict(
-            forwardMeters = prediction.forwardMeters.toDouble(),
-            lateralMeters = prediction.lateralMeters.toDouble(),
-            headingDeltaRadians = prediction.headingDeltaRadians.toDouble(),
-            intervalSeconds = PreprocessingSpec.IDR_V1.windowSpanSeconds
-        ) ?: return
-
         if (outageStartedAtMs == 0L) {
             outageStartedAtMs = System.currentTimeMillis()
             outageCount++
         }
+        val nowMs = System.currentTimeMillis()
+        val currentOutageSec = (nowMs - outageStartedAtMs) / 1000L
+
+        if (isStationary) {
+            val currentFused = if (fusion.isInitialized()) {
+                fusion.updateSpeed(0.0, 0.05)
+                fusion.state()
+            } else null
+
+            _navigationState.value = previous.copy(
+                mode = NavigationMode.AI_DEAD_RECKONING,
+                speedKmh = 0.0,
+                headingDegrees = currentFused?.headingDegrees ?: previous.headingDegrees,
+                accuracyMeters = currentFused?.horizontalUncertaintyMeters ?: previous.accuracyMeters,
+                confidencePercentage = if (currentFused != null) navigationConfidence(currentFused, GnssQuality.DENIED) else previous.confidencePercentage,
+                outageDurationSeconds = currentOutageSec
+            )
+            updateAnalytics()
+            return
+        }
+
+        fusion.updateSpeed(prediction.speedMps.toDouble(), prediction.speedUncertaintyMps.toDouble())
+
+        val strideScale = (PreprocessingSpec.IDR_V1.strideSeconds / PreprocessingSpec.IDR_V1.windowSpanSeconds)
+        val stepForward = prediction.forwardMeters.toDouble() * strideScale
+        val stepLateral = prediction.lateralMeters.toDouble() * strideScale
+        val stepHeadingDelta = prediction.headingDeltaRadians.toDouble() * strideScale
+
+        val fused = fusion.predict(
+            forwardMeters = stepForward,
+            lateralMeters = stepLateral,
+            headingDeltaRadians = stepHeadingDelta,
+            intervalSeconds = PreprocessingSpec.IDR_V1.strideSeconds
+        ) ?: return
 
         _navigationState.value = previous.copy(
             mode = NavigationMode.AI_DEAD_RECKONING,
@@ -574,10 +624,8 @@ class LiveNavigationRepository(
             crossTrackUncertaintyMeters = fused.crossTrackUncertaintyMeters,
             speedUncertaintyKmh = fused.speedUncertaintyMps * 3.6,
             headingUncertaintyDegrees = fused.headingUncertaintyDegrees,
-            outageDurationSeconds = previous.outageDurationSeconds +
-                PreprocessingSpec.IDR_V1.windowSpanSeconds.toLong().coerceAtLeast(1L),
-            totalDistanceKm = previous.totalDistanceKm +
-                prediction.forwardMeters.coerceAtLeast(0f) / 1000.0
+            outageDurationSeconds = currentOutageSec,
+            totalDistanceKm = previous.totalDistanceKm + stepForward.coerceAtLeast(0.0) / 1000.0
         )
         _mapState.value = _mapState.value.copy(
             currentPosition = fused.position,
@@ -586,6 +634,7 @@ class LiveNavigationRepository(
         )
 
         val match = applyRouteMatch(fused.position, isDeadReckoning = true)
+        Log.d("DR_NAV", "[DR_STEP] lat=${"%.6f".format(fused.position.latitude)}, lon=${"%.6f".format(fused.position.longitude)}, speed=${"%.1f".format(fused.speedMps * 3.6)}km/h, hdg=${"%.1f".format(fused.headingDegrees)}°, unc=${"%.1f".format(fused.horizontalUncertaintyMeters)}m, dF=${"%.2f".format(stepForward)}m, dL=${"%.2f".format(stepLateral)}m")
         if (match != null) {
             val constrained = fusion.updateMapConstraint(
                 matchedPosition = match.point,
@@ -593,6 +642,7 @@ class LiveNavigationRepository(
                 confidence = match.confidence
             )
             if (constrained != null && constrained.applied) {
+                Log.d("DR_NAV", "[MAP_CONSTRAIN] applied=true, crossCorr=${"%.2f".format(constrained.crossTrackCorrectionMeters)}m, newPos=(${ "%.6f".format(constrained.state.position.latitude)}, ${"%.6f".format(constrained.state.position.longitude)})")
                 _navigationState.value = _navigationState.value.copy(
                     latitude = constrained.state.position.latitude,
                     longitude = constrained.state.position.longitude,
@@ -706,6 +756,13 @@ class LiveNavigationRepository(
         val routeMatch = RouteMapMatcher.match(position, activeRoute)
         val roadCandidates = offlineRoadNetwork.match(position)
         val hmmMatch = roadMatcher.update(position, roadCandidates)
+        _mapMatchDebugState.value = MapMatchDebugState(
+            rawPosition = position,
+            matchedCandidate = hmmMatch?.candidate,
+            allCandidates = roadCandidates,
+            confidence = hmmMatch?.confidence,
+            distanceErrorMeters = hmmMatch?.candidate?.distanceMeters
+        )
         // Road bearing is carried through because the estimator constrains position across
         // the road only. Without it there is no way to avoid inventing along-track information.
         val hmmRouteMatch = hmmMatch?.let {
@@ -737,6 +794,7 @@ class LiveNavigationRepository(
             distanceFromRoadMeters = match.distanceMeters,
             candidateCount = if (roadCandidates.isEmpty()) 1 else roadCandidates.size
         )
+        Log.d("DR_NAV", "[MAP_MATCH] raw=(${"%.6f".format(position.latitude)}, ${"%.6f".format(position.longitude)}) -> snap=(${"%.6f".format(match.point.latitude)}, ${"%.6f".format(match.point.longitude)}), road='${_mapMatchingState.value.selectedRoadName}', dist=${"%.1f".format(match.distanceMeters)}m, conf=${match.confidence}%, cands=${roadCandidates.size}")
         _mapState.value = _mapState.value.copy(
             matchedPosition = match.point,
             matchedTrajectory = (_mapState.value.matchedTrajectory + match.point).takeLast(200)

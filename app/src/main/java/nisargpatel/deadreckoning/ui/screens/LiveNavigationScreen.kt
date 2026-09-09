@@ -49,6 +49,8 @@ fun LiveNavigationScreen(
 ) {
     val navState by viewModel.navigationState.collectAsState()
     val routeInfo by viewModel.selectedRoute.collectAsState()
+    val hmmDebugState by viewModel.mapMatchDebugState.collectAsState()
+    var showHmmDebugOverlay by remember { mutableStateOf(false) }
     var potholeAlert by remember { mutableStateOf<String?>(null) }
     var mapViewRef by remember { mutableStateOf<MapView?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -152,6 +154,13 @@ fun LiveNavigationScreen(
                     )
                     mapView.controller.animateTo(currentPos)
                 }
+
+                MapMatchDebugOverlay.updateOverlay(
+                    mapView = mapView,
+                    debugState = hmmDebugState,
+                    isVisible = showHmmDebugOverlay
+                )
+
                 mapView.invalidate()
             },
             modifier = Modifier.fillMaxSize()
@@ -188,6 +197,48 @@ fun LiveNavigationScreen(
                 ) {
                     ModeIndicator(mode = navState.mode)
                     ConfidenceIndicator(percentage = navState.confidencePercentage)
+                }
+
+                // HMM Debug active banner
+                AnimatedVisibility(
+                    visible = showHmmDebugOverlay,
+                    enter = slideInVertically() + fadeIn(),
+                    exit = slideOutVertically() + fadeOut()
+                ) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = UberDarkCard.copy(alpha = 0.92f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen.copy(alpha = 0.7f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(SuccessGreen, CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            val matched = hmmDebugState?.matchedCandidate
+                            val count = hmmDebugState?.allCandidates?.size ?: 0
+                            val text = if (matched != null) {
+                                val distStr = String.format(java.util.Locale.US, "%.1f", matched.distanceMeters)
+                                "HMM Debug: ${matched.roadName} (${distStr}m, ${hmmDebugState?.confidence ?: 0}%) | $count cands"
+                            } else {
+                                "HMM Debug: No match ($count candidates)"
+                            }
+                            Text(
+                                text = text,
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
 
                 // GNSS outage banner
@@ -255,6 +306,16 @@ fun LiveNavigationScreen(
                 .padding(end = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // HMM Map-Matching Debug Overlay Toggle
+            SmallMapFab(
+                icon = Icons.Default.AltRoute,
+                tint = if (showHmmDebugOverlay) SuccessGreen else TextSecondary,
+                background = if (showHmmDebugOverlay) SuccessGreen.copy(alpha = 0.25f) else UberDarkCard,
+                contentDescription = "HMM Map Match Debug Overlay"
+            ) {
+                showHmmDebugOverlay = !showHmmDebugOverlay
+            }
+
             // Recenter
             SmallMapFab(
                 icon = Icons.Default.MyLocation,

@@ -13,6 +13,7 @@ interface NavigationRepository {
     val aiState: StateFlow<AIState>
     val mapState: StateFlow<MapState>
     val mapMatchingState: StateFlow<MapMatchingState>
+    val mapMatchDebugState: StateFlow<MapMatchDebugState?>
     val analyticsState: StateFlow<AnalyticsState>
     val sessionState: StateFlow<SessionState>
     val navigationEvents: SharedFlow<NavigationEvent>

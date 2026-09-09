@@ -44,7 +44,7 @@ data class OfflineRoadNetworkState(
     val restrictionCount: Int = 0
 )
 
-private data class TurnRestriction(val fromWay: Long, val toWay: Long, val viaNode: Long, val only: Boolean)
+internal data class TurnRestriction(val fromWay: Long, val toWay: Long, val viaNode: Long, val only: Boolean)
 private data class StoredNetwork(val segments: List<StoredSegment>, val restrictions: List<TurnRestriction>, val packages: List<OfflineMapPackage>)
 private data class StoredSegment(val wayId: Long, val name: String, val points: List<StoredPoint>, val nodeIds: List<Long>, val oneWay: Boolean, val maxSpeedKph: Int?, val access: String?, val highway: String, val roundabout: Boolean, val lanes: Int?)
 private data class StoredPoint(val latitude: Double, val longitude: Double)
@@ -65,6 +65,7 @@ class OfflineRoadNetwork private constructor(private val context: Context) {
     private var packages = emptyList<OfflineMapPackage>()
     private var segments = load()
     private var spatialIndex = buildSpatialIndex(segments)
+    @Volatile private var graph: RoadGraph = RoadGraph(segments, restrictions)
     private val _state = MutableStateFlow(snapshot())
     val state: StateFlow<OfflineRoadNetworkState> = _state.asStateFlow()
 
@@ -86,6 +87,7 @@ class OfflineRoadNetwork private constructor(private val context: Context) {
         segments = (segments + parsed.segments).distinctBy { it.wayId }
         restrictions = (restrictions + parsed.restrictions).distinct()
         spatialIndex = buildSpatialIndex(segments)
+        graph = RoadGraph(segments, restrictions)
         packages = (packages.filterNot { it.fileName == file.name } + OfflineMapPackage(file.nameWithoutExtension, displayName, file.name, file.length(), System.currentTimeMillis(), parsed.segments.size)).takeLast(8)
         persist()
         _state.value = snapshot(false, "${segments.size} roads indexed from $displayName")
@@ -98,60 +100,20 @@ class OfflineRoadNetwork private constructor(private val context: Context) {
         }
     }.sortedBy { it.distanceMeters }.take(8)
 
-    fun route(start: GeoPoint, end: GeoPoint): List<GeoPoint>? {
-        if (segments.isEmpty()) return null
-        val graph = HashMap<Long, MutableList<Edge>>()
-        val nodes = HashMap<Long, GeoPoint>()
-        segments.forEach { segment ->
-            segment.points.zip(segment.nodeIds).forEach { (point, id) -> nodes[id] = point }
-            segment.nodeIds.zipWithNext().forEach { (from, to) ->
-                val distance = nodes[from]!!.distanceToAsDouble(nodes[to]!!)
-                val seconds = distance / ((segment.maxSpeedKph ?: defaultSpeed(segment.highway)) / 3.6)
-                graph.getOrPut(from) { mutableListOf() }.add(Edge(to, segment.wayId, seconds))
-                if (!segment.oneWay) graph.getOrPut(to) { mutableListOf() }.add(Edge(from, segment.wayId, seconds))
-            }
-        }
-        val startId = nodes.minByOrNull { it.value.distanceToAsDouble(start) }?.key ?: return null
-        val endId = nodes.minByOrNull { it.value.distanceToAsDouble(end) }?.key ?: return null
-        data class Key(val nodeId: Long, val incomingWay: Long?)
-        data class QueueNode(val key: Key, val cost: Double)
-        val queue = PriorityQueue<QueueNode>(compareBy { it.cost })
-        val startKey = Key(startId, null)
-        val costs = hashMapOf(startKey to 0.0)
-        val previous = HashMap<Key, Key>()
-        queue += QueueNode(startKey, 0.0)
-        var destination: Key? = null
-        while (queue.isNotEmpty()) {
-            val current = queue.remove()
-            if (current.cost != costs[current.key]) continue
-            if (current.key.nodeId == endId) { destination = current.key; break }
-            graph[current.key.nodeId].orEmpty().forEach { edge ->
-                if (violatesRestriction(current.key.incomingWay, edge.wayId, current.key.nodeId)) return@forEach
-                val next = Key(edge.toNode, edge.wayId)
-                val nextCost = current.cost + edge.travelSeconds
-                if (nextCost < (costs[next] ?: Double.MAX_VALUE)) {
-                    costs[next] = nextCost
-                    previous[next] = current.key
-                    queue += QueueNode(next, nextCost)
-                }
-            }
-        }
-        val endKey = destination ?: return null
-        val ids = generateSequence(endKey) { previous[it] }.toList().asReversed().map { it.nodeId }
-        return listOf(start) + ids.mapNotNull(nodes::get) + end
-    }
+    fun route(start: GeoPoint, end: GeoPoint): List<GeoPoint>? = graph.route(start, end)
+
+    fun shortestPathMeters(
+        from: GeoPoint, fromWayId: Long,
+        to: GeoPoint, toWayId: Long,
+        maxSearchMeters: Double
+    ): Double? = graph.shortestPathMeters(from, fromWayId, to, toWayId, maxSearchMeters)
 
     fun clear() {
         networkFile.delete()
         packageDir.listFiles()?.forEach(File::delete)
         segments = emptyList(); restrictions = emptyList(); packages = emptyList(); spatialIndex = emptyMap()
+        graph = RoadGraph.EMPTY
         _state.value = snapshot(false, "Regional road packages cleared")
-    }
-
-    private fun violatesRestriction(fromWay: Long?, toWay: Long, viaNode: Long): Boolean {
-        if (fromWay == null) return false
-        val local = restrictions.filter { it.fromWay == fromWay && it.viaNode == viaNode }
-        return local.any { (!it.only && it.toWay == toWay) || (it.only && it.toWay != toWay) }
     }
 
     private fun snapshot(isBusy: Boolean = false, message: String = if (segments.isEmpty()) "No regional road package imported" else "Regional road graph ready") =
@@ -203,8 +165,7 @@ class OfflineRoadNetwork private constructor(private val context: Context) {
         return GeoPoint(start.latitude + dy * factor / latScale, start.longitude + dx * factor / lonScale)
     }
 
-    private fun defaultSpeed(highway: String) = when (highway) { "motorway", "trunk" -> 80; "primary" -> 60; "secondary" -> 45; else -> 30 }
-    private data class Edge(val toNode: Long, val wayId: Long, val travelSeconds: Double)
+
 }
 
 private class PbfGraphParser {

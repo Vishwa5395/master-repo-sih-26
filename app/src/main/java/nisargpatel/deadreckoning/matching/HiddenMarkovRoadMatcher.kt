@@ -9,7 +9,30 @@ import kotlin.math.exp
 data class MatchedRoad(val candidate: RoadCandidate, val confidence: Int)
 
 /** Fixed-lag route-network Viterbi trellis using proximity, heading, and transition continuity. */
-class HiddenMarkovRoadMatcher(private val historyDepth: Int = 20) {
+class HiddenMarkovRoadMatcher(
+    private val historyDepth: Int = 20,
+    /**
+     * Network distance function: (fromPoint, fromWayId, toPoint, toWayId, maxMeters) → metres or null.
+     * Default is straight-line distance (ignores wayId and max), preserving today's exact
+     * arithmetic for callers that haven't wired in the real network graph.
+     */
+    private val networkDistance: (GeoPoint, Long, GeoPoint, Long, Double) -> Double? =
+        { a, _, b, _, _ -> a.distanceToAsDouble(b) }
+) {
+    companion object {
+        /**
+         * Score penalty (in distance-error metres) applied when [networkDistance]
+         * returns null, meaning no road path exists within the search bound.
+         *
+         * At 18.0 metres per unit of score (the existing divisor), 40 m costs
+         * ≈ 2.2 score units — enough to flip a close transition race but not
+         * enough to override a candidate that is genuinely much closer to the
+         * observation. Speed-independent: the penalty reflects graph topology
+         * (unreachable), not kinematics.
+         */
+        const val UNREACHABLE_PENALTY_METERS = 40.0
+    }
+
     private data class State(val candidate: RoadCandidate, val score: Double, val parentIndex: Int?)
     private data class Layer(val observation: GeoPoint, val states: List<State>)
     private val trellis = ArrayDeque<Layer>()
@@ -36,8 +59,13 @@ class HiddenMarkovRoadMatcher(private val historyDepth: Int = 20) {
     fun reset() = trellis.clear()
 
     private fun transitionScore(from: RoadCandidate, to: RoadCandidate, observedDistance: Double): Double {
-        val graphDistance = from.point.distanceToAsDouble(to.point)
-        val distanceError = abs(graphDistance - observedDistance)
+        val maxSearchMeters = maxOf(4.0 * observedDistance, 60.0)
+        val graphDistance = networkDistance(from.point, from.wayId, to.point, to.wayId, maxSearchMeters)
+        val distanceError = if (graphDistance != null) {
+            abs(graphDistance - observedDistance)
+        } else {
+            UNREACHABLE_PENALTY_METERS
+        }
         val sameWayBonus = if (from.wayId != 0L && from.wayId == to.wayId) 1.8 else if (from.roadName == to.roadName) 0.6 else 0.0
         return sameWayBonus - distanceError / 18.0
     }

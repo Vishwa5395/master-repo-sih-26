@@ -27,4 +27,32 @@ class HiddenMarkovRoadMatcherTest {
         assertEquals("Main Road", first?.candidate?.roadName)
         assertEquals("Main Road", second?.candidate?.roadName)
     }
+
+    @Test
+    fun `prefers network-connected candidate over closer but unreachable alternate`() {
+        // Fake network: candidates on wayId=1 are "connected" (15 m path),
+        // candidates on wayId=2 return null (unreachable within the bound).
+        val fakeNetwork: (GeoPoint, Long, GeoPoint, Long, Double) -> Double? =
+            { _, fromWay, _, toWay, _ ->
+                if (fromWay == 1L && toWay == 1L) 15.0 else null
+            }
+        val matcher = HiddenMarkovRoadMatcher(networkDistance = fakeNetwork)
+        matcher.update(
+            GeoPoint(16.5, 80.6),
+            listOf(
+                RoadCandidate("Connected Road", GeoPoint(16.5, 80.6), 3.0, wayId = 1),
+                RoadCandidate("Isolated Road", GeoPoint(16.5, 80.60005), 1.5, wayId = 2)
+            )
+        )
+        // Second observation: Isolated Road is closer (1.0 m vs 3.2 m) but
+        // its transition is unreachable → penalised by UNREACHABLE_PENALTY_METERS.
+        val result = matcher.update(
+            GeoPoint(16.5001, 80.6),
+            listOf(
+                RoadCandidate("Connected Road", GeoPoint(16.5001, 80.6), 3.2, wayId = 1),
+                RoadCandidate("Isolated Road", GeoPoint(16.5001, 80.60005), 1.0, wayId = 2)
+            )
+        )
+        assertEquals("Connected Road", result?.candidate?.roadName)
+    }
 }
